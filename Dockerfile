@@ -49,7 +49,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ocl-icd-opencl-dev libboost-filesystem-dev libboost-system-dev \
     # Utilities (interactive use, debugging, file transfer)
     tmux htop curl wget sudo ca-certificates gnupg locales vim jq \
-    ripgrep fd-find tree unzip zip openssh-client less man-db \
+    ripgrep fd-find tree unzip zip openssh-client openssh-server less man-db \
     # Source plugin deps
     libffms2-dev \
     && rm -rf /var/lib/apt/lists/*
@@ -102,7 +102,7 @@ RUN VS_DIR=$(python3 -c "import vapoursynth; print(vapoursynth.__path__[0])")/pl
 
 # Install VapourSynth C headers + generate pkg-config file.
 # The pip wheel doesn't ship headers, so fetch them from the matching release.
-RUN VS_VERSION=$(python3 -c "import vapoursynth; print(vapoursynth.__version__)") \
+RUN VS_VERSION=$(python3 -c "import vapoursynth; print(str(vapoursynth.__version__).lstrip('R'))") \
     && VS_API=$(python3 -c "import vapoursynth; print(vapoursynth.__api_version__.api_major)") \
     && VS_LIB=$(python3 -c "import vapoursynth, os; print(os.path.dirname(vapoursynth.__path__[0]))") \
     && mkdir -p /usr/local/include/vapoursynth \
@@ -179,9 +179,9 @@ RUN cd /tmp && git clone --depth 1 https://github.com/HomeOfVapourSynthEvolution
 RUN cd /tmp && git clone --depth 1 https://github.com/AmusementClub/vs-nlm-cuda \
     && cd vs-nlm-cuda \
     && cmake -B build -DCMAKE_BUILD_TYPE=Release \
-        -DCMAKE_CUDA_FLAGS="--use_fast_math" \
-        -DCMAKE_CUDA_ARCHITECTURES="${CUDA_ARCHS}" \
-        -DCMAKE_INSTALL_LIBDIR=/usr/local/lib/vapoursynth \
+    -DCMAKE_CUDA_FLAGS="--use_fast_math" \
+    -DCMAKE_CUDA_ARCHITECTURES="${CUDA_ARCHS}" \
+    -DCMAKE_INSTALL_LIBDIR=/usr/local/lib/vapoursynth \
     && cmake --build build -j$(nproc) \
     && cmake --install build \
     && rm -rf /tmp/vs-nlm-cuda \
@@ -211,17 +211,17 @@ RUN cd /tmp && git clone --depth 1 https://github.com/FFmpeg/nv-codec-headers.gi
 RUN cd /tmp && git clone --depth 1 https://git.ffmpeg.org/ffmpeg.git ffmpeg-src \
     && cd ffmpeg-src \
     && ./configure \
-        --prefix=/usr/local \
-        --enable-gpl --enable-nonfree \
-        --enable-libx264 --enable-libx265 --enable-libvpx \
-        --enable-libopus --enable-libvorbis --enable-libmp3lame \
-        --enable-libfdk-aac --enable-libfreetype --enable-fontconfig \
-        --enable-libfribidi --enable-libass \
-        --enable-libdav1d --enable-libsvtav1 \
-        --enable-libopenh264 --enable-libopenjpeg --enable-libwebp \
-        --enable-cuda --enable-cuvid --enable-nvenc --enable-nvdec \
-        --enable-optimizations --enable-pthreads --enable-runtime-cpudetect \
-        --enable-shared --disable-static \
+    --prefix=/usr/local \
+    --enable-gpl --enable-nonfree \
+    --enable-libx264 --enable-libx265 --enable-libvpx \
+    --enable-libopus --enable-libvorbis --enable-libmp3lame \
+    --enable-libfdk-aac --enable-libfreetype --enable-fontconfig \
+    --enable-libfribidi --enable-libass \
+    --enable-libdav1d --enable-libsvtav1 \
+    --enable-libopenh264 --enable-libopenjpeg --enable-libwebp \
+    --enable-cuda --enable-cuvid --enable-nvenc --enable-nvdec \
+    --enable-optimizations --enable-pthreads --enable-runtime-cpudetect \
+    --enable-shared --disable-static \
     && make -j$(nproc) \
     && make install \
     && rm -rf /tmp/ffmpeg-src \
@@ -275,21 +275,45 @@ RUN echo "=== Verifying installation ===" \
     && python3 -c "from vsspandrel import vsspandrel; print('vsspandrel OK')" \
     && python3 -c "from vsscunet import scunet, SCUNetModel; print('vsscunet OK')" \
     && python3 -c "\
-import vapoursynth as vs; core = vs.core; \
-plugins = sorted([p for p in dir(core) if not p.startswith('_')]); \
-print('Loaded plugins:', plugins); \
-assert 'mv' in plugins, 'mvtools not loaded!'; \
-assert 'fmtc' in plugins, 'fmtconv not loaded!'; \
-assert 'znedi3' in plugins, 'znedi3 not loaded!'; \
-assert 'dfttest' in plugins, 'DFTTest native plugin not loaded!'; \
-assert 'ffms2' in plugins or 'bs' in plugins, 'No source plugin (ffms2/bestsource) loaded!'; \
-has_nlm = 'nlm_cuda' in plugins or 'knlm' in plugins; \
-print(f'NLM denoiser: {\"nlm_cuda\" if \"nlm_cuda\" in plugins else \"knlm\" if \"knlm\" in plugins else \"NONE\"}'); \
-print(f'CAS: {\"yes\" if \"cas\" in plugins else \"no\"}')" \
+    import vapoursynth as vs; core = vs.core; \
+    plugins = sorted([p for p in dir(core) if not p.startswith('_')]); \
+    print('Loaded plugins:', plugins); \
+    assert 'mv' in plugins, 'mvtools not loaded!'; \
+    assert 'fmtc' in plugins, 'fmtconv not loaded!'; \
+    assert 'znedi3' in plugins, 'znedi3 not loaded!'; \
+    assert 'dfttest' in plugins, 'DFTTest native plugin not loaded!'; \
+    assert 'ffms2' in plugins or 'bs' in plugins, 'No source plugin (ffms2/bestsource) loaded!'; \
+    has_nlm = 'nlm_cuda' in plugins or 'knlm' in plugins; \
+    print(f'NLM denoiser: {\"nlm_cuda\" if \"nlm_cuda\" in plugins else \"knlm\" if \"knlm\" in plugins else \"NONE\"}'); \
+    print(f'CAS: {\"yes\" if \"cas\" in plugins else \"no\"}')" \
     && ffmpeg -version | head -1 \
     && vspipe --version || echo "WARN: vspipe not available (will use Python fallback)" \
     && ls -la /models/*.pth \
     && echo "=== All checks passed ==="
 
+# ============================================================
+# SSH server (accepts PUBLIC_KEY env var at runtime)
+# ============================================================
+RUN mkdir -p /var/run/sshd /root/.ssh \
+    && chmod 700 /root/.ssh \
+    && ssh-keygen -A \
+    && sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config \
+    && sed -i 's/#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
+
+EXPOSE 22
+
+COPY <<'ENTRYPOINT' /entrypoint.sh
+#!/bin/bash
+if [ -n "$PUBLIC_KEY" ]; then
+    echo "$PUBLIC_KEY" > /root/.ssh/authorized_keys
+    chmod 600 /root/.ssh/authorized_keys
+    /usr/sbin/sshd
+    echo "SSH server started"
+fi
+exec "$@"
+ENTRYPOINT
+RUN chmod +x /entrypoint.sh
+
 WORKDIR /workspace
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["bash"]
