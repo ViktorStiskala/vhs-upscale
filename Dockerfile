@@ -233,7 +233,6 @@ FROM base AS final
 
 # Copy Python packages (PyTorch + VapourSynth ecosystem)
 COPY --from=stage-python /usr/local/lib/python3.12/dist-packages /usr/local/lib/python3.12/dist-packages
-COPY --from=stage-python /usr/local/bin/vspipe /usr/local/bin/vspipe
 COPY --from=stage-python /usr/local/include/vapoursynth /usr/local/include/vapoursynth
 COPY --from=stage-python /usr/local/lib/pkgconfig/vapoursynth.pc /usr/local/lib/pkgconfig/vapoursynth.pc
 
@@ -242,6 +241,10 @@ COPY --from=stage-ffmpeg /opt/ffmpeg/bin/ /usr/local/bin/
 COPY --from=stage-ffmpeg /opt/ffmpeg/lib/ /usr/local/lib/
 COPY --from=stage-ffmpeg /opt/ffmpeg/include/ /usr/local/include/
 COPY --from=stage-ffmpeg /opt/ffmpeg/share/ /usr/local/share/
+
+# Fix FFmpeg pkg-config prefix (built with --prefix=/opt/ffmpeg, now at /usr/local)
+RUN find /usr/local/lib/pkgconfig -name '*.pc' -exec \
+    sed -i 's|/opt/ffmpeg|/usr/local|g' {} +
 
 # Copy native VapourSynth plugins
 COPY --from=stage-plugins /opt/vs-plugins/ /usr/local/lib/vapoursynth/
