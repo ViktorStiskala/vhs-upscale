@@ -50,6 +50,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libfftw3-dev \
     # OpenCL + Boost (required for KNLMeansCL fallback denoiser)
     ocl-icd-opencl-dev libboost-filesystem-dev libboost-system-dev \
+    # LLVM 15 (required by akarin plugin JIT expression compiler; needs >= 10.0, < 16)
+    llvm-15-dev libzstd-dev \
     # Utilities (interactive use, debugging, file transfer)
     tmux htop curl wget sudo ca-certificates gnupg locales vim jq \
     ripgrep fd-find tree unzip zip openssh-client openssh-server less man-db aria2 \
@@ -205,6 +207,16 @@ RUN cd /tmp && git clone --depth 1 https://github.com/Jaded-Encoding-Thaumaturgy
     && find /usr/local/lib -name "*resize2*" -name "*.so" -exec cp {} /opt/vs-plugins/ \; \
     && rm -rf /tmp/vapoursynth-resize2
 
+# akarin (JIT expression evaluator — required by vstools for scene change detection in QTGMC)
+# Needs LLVM >= 10, < 16; we use LLVM 15 from Ubuntu 24.04 repos.
+# Installs to libdir/vapoursynth from vapoursynth.pc (= /opt/vs-plugins/vapoursynth/),
+# collected into /opt/vs-plugins/ by the flatten step below.
+RUN cd /tmp && git clone --depth 1 https://github.com/AkarinVS/vapoursynth-plugin akarin \
+    && cd akarin \
+    && LLVM_CONFIG=llvm-config-15 meson setup build --buildtype=release \
+    && ninja -C build && ninja -C build install \
+    && rm -rf /tmp/akarin
+
 # CAS (Contrast Adaptive Sharpening — AMD FidelityFX CAS for VapourSynth)
 RUN cd /tmp && git clone --depth 1 https://github.com/HomeOfVapourSynthEvolution/VapourSynth-CAS \
     && cd VapourSynth-CAS \
@@ -330,6 +342,7 @@ RUN echo "=== Verifying installation ===" \
     assert 'znedi3' in plugins, 'znedi3 not loaded!'; \
     assert 'dfttest' in plugins, 'DFTTest native plugin not loaded!'; \
     assert 'resize2' in plugins, 'resize2 not loaded (required by vsjetpack)!'; \
+    assert 'akarin' in plugins, 'akarin not loaded (required by vstools sc_detect)!'; \
     assert 'ffms2' in plugins or 'bs' in plugins, 'No source plugin (ffms2/bestsource) loaded!'; \
     has_nlm = 'nlm_cuda' in plugins or 'knlm' in plugins; \
     print(f'NLM denoiser: {\"nlm_cuda\" if \"nlm_cuda\" in plugins else \"knlm\" if \"knlm\" in plugins else \"NONE\"}'); \
