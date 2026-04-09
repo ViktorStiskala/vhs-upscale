@@ -224,6 +224,9 @@ QTGMC is CPU-bound. More vCPUs = faster. A100 PCIe (8 vCPUs) will be ~2x slower 
 ### Pod terminated unexpectedly
 Always use **On-Demand** pods. Spot instances can be terminated with 5s warning, killing your encode.
 
+### `set_mempolicy: Operation not permitted`
+x265 tries NUMA-aware thread pinning via the `set_mempolicy` syscall, which Docker's default seccomp profile blocks. This is **non-fatal** — x265 falls back gracefully with no impact on output quality. Fixing it requires `--cap-add SYS_NICE` on `docker run`, which Runpod doesn't expose in template settings.
+
 ### vspipe not working
 If vspipe fails, the script automatically falls back to a Python Y4M pipe. No action needed.
 

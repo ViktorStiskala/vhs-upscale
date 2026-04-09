@@ -51,7 +51,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ocl-icd-opencl-dev libboost-filesystem-dev libboost-system-dev \
     # Utilities (interactive use, debugging, file transfer)
     tmux htop curl wget sudo ca-certificates gnupg locales vim jq \
-    ripgrep fd-find tree unzip zip openssh-client openssh-server less man-db \
+    ripgrep fd-find tree unzip zip openssh-client openssh-server less man-db aria2 \
     # Source plugin deps
     libffms2-dev \
     && rm -rf /var/lib/apt/lists/*
@@ -262,7 +262,8 @@ COPY upscale.vpy /opt/vhs-restore/upscale.vpy
 COPY upscale.sh /opt/vhs-restore/upscale.sh
 COPY batch_upscale.sh /opt/vhs-restore/batch_upscale.sh
 COPY setup.sh /opt/vhs-restore/setup.sh
-RUN chmod +x /opt/vhs-restore/upscale.sh /opt/vhs-restore/batch_upscale.sh /opt/vhs-restore/setup.sh
+COPY start.sh /start.sh
+RUN chmod +x /opt/vhs-restore/upscale.sh /opt/vhs-restore/batch_upscale.sh /opt/vhs-restore/setup.sh /start.sh
 
 ENV PATH="/opt/vhs-restore:${PATH}"
 
@@ -304,18 +305,5 @@ RUN mkdir -p /var/run/sshd /root/.ssh \
 
 EXPOSE 22
 
-COPY <<'ENTRYPOINT' /entrypoint.sh
-#!/bin/bash
-if [ -n "$PUBLIC_KEY" ]; then
-    echo "$PUBLIC_KEY" > /root/.ssh/authorized_keys
-    chmod 600 /root/.ssh/authorized_keys
-    /usr/sbin/sshd
-    echo "SSH server started"
-fi
-exec "$@"
-ENTRYPOINT
-RUN chmod +x /entrypoint.sh
-
 WORKDIR /workspace
-ENTRYPOINT ["/entrypoint.sh"]
-CMD ["bash"]
+CMD ["/start.sh"]
