@@ -196,10 +196,13 @@ RUN cd /tmp && git clone --recursive https://github.com/sekrit-twc/znedi3 \
     && rm -rf /tmp/znedi3
 
 # resize2 (required by vsjetpack kernel system — Bicubic, Point, Spline, etc.)
+# The meson.build hardcodes install to Python's site-packages/vapoursynth/plugins/,
+# so we install normally then copy the .so to our plugin dir.
 RUN cd /tmp && git clone --depth 1 https://github.com/Jaded-Encoding-Thaumaturgy/vapoursynth-resize2 \
     && cd vapoursynth-resize2 \
-    && meson setup build --buildtype=release --libdir=/opt/vs-plugins \
-    && ninja -C build && DESTDIR="" ninja -C build install \
+    && meson setup build --buildtype=release \
+    && ninja -C build && ninja -C build install \
+    && find /usr/local/lib -name "*resize2*" -name "*.so" -exec cp {} /opt/vs-plugins/ \; \
     && rm -rf /tmp/vapoursynth-resize2
 
 # CAS (Contrast Adaptive Sharpening — AMD FidelityFX CAS for VapourSynth)
