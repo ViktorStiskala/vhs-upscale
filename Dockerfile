@@ -114,7 +114,7 @@ RUN cd /tmp && git clone --depth 1 https://github.com/FFmpeg/nv-codec-headers.gi
     && cd nv-codec-headers && make PREFIX=/opt/ffmpeg && make PREFIX=/opt/ffmpeg install \
     && rm -rf /tmp/nv-codec-headers
 
-ENV PKG_CONFIG_PATH="/opt/ffmpeg/lib/pkgconfig:${PKG_CONFIG_PATH}"
+ENV PKG_CONFIG_PATH="/opt/ffmpeg/lib/pkgconfig"
 
 RUN cd /tmp && git clone --depth 1 https://git.ffmpeg.org/ffmpeg.git ffmpeg-src \
     && cd ffmpeg-src \
