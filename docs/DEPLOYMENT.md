@@ -2,18 +2,23 @@
 
 ## Prerequisites
 
-- Docker image built and pushed to a container registry (Docker Hub, GHCR, etc.)
+- Docker image: `ghcr.io/viktorstiskala/vhs-upscale:cu128` (or build your own)
 - `2xVHS2HD-RealPLKSR.pth` model file (~29MB)
 - Source AVI files on local machine or accessible URL
 
-## 1. Build the Docker Image
+## 1. Docker Image
+
+A pre-built image is available on GitHub Container Registry:
 
 ```bash
-cd projects/vhs-restoration
+docker pull ghcr.io/viktorstiskala/vhs-upscale:cu128
+```
 
-# One build works for ALL GPUs (A100, H100, RTX 5090, RTX Pro 6000)
-docker build -t your-registry/vhs-restore .
-docker push your-registry/vhs-restore
+Or build it yourself:
+
+```bash
+docker build -t ghcr.io/viktorstiskala/vhs-upscale:cu128 .
+docker push ghcr.io/viktorstiskala/vhs-upscale:cu128
 ```
 
 CUDA 12.8 with cu128 natively supports all target GPUs including Blackwell (SM120). The image includes compiled GPU code for SM75 through SM120 — no JIT compilation needed.
@@ -42,7 +47,7 @@ Requires driver R580+. Only needed for FP4/FP8 advanced CUDA features (not used 
 2. Click **New Template**
 3. Configure:
    - **Template Name:** VHS Restoration Pipeline
-   - **Container Image:** `your-registry/vhs-restore`
+   - **Container Image:** `ghcr.io/viktorstiskala/vhs-upscale:cu128`
    - **Docker Command:** (leave empty — uses `CMD ["bash"]`)
    - **Container Disk:** 20 GB (ephemeral scratch space)
    - **Volume Disk:** 300 GB minimum (persistent `/workspace`)

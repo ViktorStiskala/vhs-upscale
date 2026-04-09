@@ -20,6 +20,8 @@
 ARG CUDA_TAG=12.8.0-cudnn-devel-ubuntu24.04
 FROM nvidia/cuda:${CUDA_TAG}
 
+LABEL org.opencontainers.image.source=https://github.com/ViktorStiskala/vhs-upscale
+
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 
