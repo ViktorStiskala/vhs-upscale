@@ -57,6 +57,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libffms2-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# Set up UTF-8 locale
+RUN locale-gen en_US.UTF-8
+ENV LANG=en_US.UTF-8
+ENV TERM=xterm-256color
+
 # s5cmd (fast S3-compatible file transfer)
 RUN curl -fsSL https://github.com/peak/s5cmd/releases/download/v2.3.0/s5cmd_2.3.0_Linux-64bit.tar.gz \
     | tar -xz -C /usr/local/bin s5cmd
