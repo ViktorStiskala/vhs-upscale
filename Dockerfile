@@ -56,6 +56,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libffms2-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# s5cmd (fast S3-compatible file transfer)
+RUN curl -fsSL https://github.com/peak/s5cmd/releases/download/v2.3.0/s5cmd_2.3.0_linux_amd64.tar.gz \
+    | tar -xz -C /usr/local/bin s5cmd
+
 # ============================================================
 # Python packages - PyTorch
 # ============================================================
@@ -139,6 +143,7 @@ RUN cd /tmp && git clone --depth 1 https://github.com/HomeOfVapourSynthEvolution
 # Must specify --libdir — mvtools' meson.build doesn't query VS plugindir
 RUN cd /tmp && git clone --depth 1 https://github.com/dubhater/vapoursynth-mvtools \
     && cd vapoursynth-mvtools \
+    && mkdir -p vapoursynth/include && ln -s /usr/local/include/vapoursynth/*.h vapoursynth/include/ \
     && meson setup build --buildtype=release --libdir=/usr/local/lib/vapoursynth \
     && ninja -C build && ninja -C build install \
     && rm -rf /tmp/vapoursynth-mvtools

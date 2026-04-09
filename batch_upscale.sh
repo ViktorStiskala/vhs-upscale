@@ -177,48 +177,48 @@ process_file() {
     fi
 }
 
-# Simple round-robin GPU assignment with parallel execution
-gpu_idx=0
-running_jobs=0
+# GPU-slot scheduling: assign work to whichever GPU finishes first
+FREE_GPUS=("${GPU_LIST[@]}")
+
+collect_finished() {
+    # Collect a finished job and return its GPU to the free pool.
+    # Uses wait -n -p (bash 5.1+) with fallback for older bash.
+    local FINISHED_PID="" local_exit=0
+
+    if wait -n -p FINISHED_PID 2>/dev/null; then
+        local_exit=0
+    else
+        local_exit=$?
+    fi
+
+    if [[ -n "$FINISHED_PID" ]] && [[ -n "${JOB_PIDS[$FINISHED_PID]+x}" ]]; then
+        if [[ $local_exit -eq 0 ]]; then ((COMPLETED++)); elif [[ $local_exit -eq 2 ]]; then ((SKIPPED++)); else ((FAILED++)); fi
+        FREE_GPUS+=("${JOB_GPUS[$FINISHED_PID]}")
+        unset "JOB_PIDS[$FINISHED_PID]"
+        unset "JOB_GPUS[$FINISHED_PID]"
+    else
+        # Fallback: scan all PIDs (older bash or wait -p unavailable)
+        for pid in "${!JOB_PIDS[@]}"; do
+            if ! kill -0 "$pid" 2>/dev/null; then
+                wait "$pid" 2>/dev/null; local_exit=$?
+                if [[ $local_exit -eq 0 ]]; then ((COMPLETED++)); elif [[ $local_exit -eq 2 ]]; then ((SKIPPED++)); else ((FAILED++)); fi
+                FREE_GPUS+=("${JOB_GPUS[$pid]}")
+                unset "JOB_PIDS[$pid]"
+                unset "JOB_GPUS[$pid]"
+            fi
+        done
+    fi
+}
 
 for input_file in "${INPUT_FILES[@]}"; do
-    # Wait for a GPU slot if all are busy
-    while [[ $running_jobs -ge $GPU_COUNT ]]; do
-        # Wait for any background job to finish (bash 5.2+: -p captures which PID)
-        FINISHED_PID=""
-        if wait -n -p FINISHED_PID 2>/dev/null; then
-            local_exit=0
-        else
-            local_exit=$?
-        fi
-
-        if [[ -n "$FINISHED_PID" ]] && [[ -n "${JOB_PIDS[$FINISHED_PID]+x}" ]]; then
-            # Collect the finished job
-            if [[ $local_exit -eq 0 ]]; then
-                ((COMPLETED++))
-            elif [[ $local_exit -eq 2 ]]; then
-                ((SKIPPED++))
-            else
-                ((FAILED++))
-            fi
-            unset "JOB_PIDS[$FINISHED_PID]"
-            ((running_jobs--))
-        else
-            # Fallback: scan all PIDs (older bash or wait -p unavailable)
-            for pid in "${!JOB_PIDS[@]}"; do
-                if ! kill -0 "$pid" 2>/dev/null; then
-                    wait "$pid" 2>/dev/null; local_exit=$?
-                    if [[ $local_exit -eq 0 ]]; then ((COMPLETED++)); elif [[ $local_exit -eq 2 ]]; then ((SKIPPED++)); else ((FAILED++)); fi
-                    unset "JOB_PIDS[$pid]"
-                    ((running_jobs--))
-                fi
-            done
-        fi
+    # Wait until a GPU is free
+    while [[ ${#FREE_GPUS[@]} -eq 0 ]]; do
+        collect_finished
     done
 
-    # Assign to next available GPU (round-robin)
-    current_gpu="${GPU_LIST[$gpu_idx]}"
-    gpu_idx=$(( (gpu_idx + 1) % GPU_COUNT ))
+    # Pop the first free GPU
+    current_gpu="${FREE_GPUS[0]}"
+    FREE_GPUS=("${FREE_GPUS[@]:1}")
 
     # Launch in background
     process_file "$input_file" "$current_gpu" &
@@ -226,7 +226,6 @@ for input_file in "${INPUT_FILES[@]}"; do
     JOB_PIDS[$local_pid]=1
     JOB_FILES[$local_pid]="$input_file"
     JOB_GPUS[$local_pid]="$current_gpu"
-    ((running_jobs++))
 done
 
 # Wait for all remaining jobs
