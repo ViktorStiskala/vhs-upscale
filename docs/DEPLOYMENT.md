@@ -37,7 +37,8 @@ CUDA 12.8 with cu128 natively supports all target GPUs including Blackwell (SM12
 
 **Optional: CUDA 13.0 build** (if specific 13.x features are needed):
 ```bash
-docker build --build-arg CUDA_TAG=13.0.2-cudnn-devel-ubuntu24.04 --build-arg CU_TAG=cu130 -t vhs-restore:cu130 .
+docker build --build-arg CUDA_TAG=13.0.2-cudnn-devel-ubuntu24.04 --build-arg CU_TAG=cu130 -t ghcr.io/viktorstiskala/vhs-upscale:cu130 .
+docker push ghcr.io/viktorstiskala/vhs-upscale:cu130
 ```
 Requires driver R580+. Only needed for FP4/FP8 advanced CUDA features (not used in current pipeline).
 
