@@ -32,7 +32,7 @@ docker run --gpus all -v /path/to/files:/workspace \
     upscale.sh /workspace/input.avi /workspace/output.mkv --chroma-shift -3
 ```
 
-The user-provided model `2xVHS2HD-RealPLKSR.pth` must be placed in `/workspace/models/` before running.
+Run `setup.sh` first -- it automatically downloads the required `2xVHS2HD-RealPLKSR.pth` model.
 
 ## Usage
 
@@ -70,7 +70,7 @@ See [docs/MULTI-GPU.md](docs/MULTI-GPU.md) for details on GPU scheduling, enviro
 | 2xLiveActionV1 SPAN | General-purpose upscaler (pass 2) | 2x | Built into image |
 | **2xVHS2HD-RealPLKSR** | **VHS-specific upscaler (pass 1)** | **2x** | **User-provided** |
 
-Place `2xVHS2HD-RealPLKSR.pth` in `/workspace/models/` on the pod.
+`setup.sh` automatically downloads `2xVHS2HD-RealPLKSR.pth` to `/workspace/models/` if missing.
 
 ## Output
 
@@ -106,16 +106,22 @@ docker buildx build \
 
 ### Supported GPUs
 
-| GPU | Architecture | VRAM |
-|-----|-------------|------|
-| A100 SXM/PCIe | Ampere (SM80) | 80 GB |
-| H100 SXM/PCIe | Hopper (SM90) | 80 GB |
-| RTX 5090 | Blackwell (SM120) | 32 GB |
-| RTX Pro 6000 | Blackwell (SM120) | 96 GB |
-| RTX 4090 | Ada (SM89) | 24 GB |
+Estimates per 1 hour of PAL VHS source (90K source frames -> 180K output frames after bob deinterlace). The pipeline has two bottlenecks: QTGMC deinterlace (CPU-bound, scales with vCPU count) and AI upscaling (GPU-bound, especially the 2nd pass at 1440x1152).
+
+| GPU | VRAM | vCPUs | 2x (1440x1152) | 4x (2880x2304) |
+|-----|------|-------|-----------------|-----------------|
+| H100 SXM/PCIe | 80 GB | 16 | ~5-8 hrs | ~8-15 hrs |
+| A100 SXM 80GB | 80 GB | 16 | ~5-8 hrs | ~8-15 hrs |
+| A100 PCIe 80GB | 80 GB | 8 | ~8-12 hrs | ~12-20 hrs |
+| RTX 5090 | 32 GB | varies | ~4-7 hrs | ~6-12 hrs |
+| RTX Pro 6000 | 96 GB | varies | ~4-7 hrs | ~6-12 hrs |
+| RTX 4090 | 24 GB | varies | ~6-10 hrs | ~10-18 hrs |
+
+> **2x mode** is typically CPU-bottlenecked (QTGMC at ~5-8 fps with 16 vCPUs). **4x mode** is GPU-bottlenecked (SPAN 2x upscale at 1440x1152 at ~2-5 fps). Pods with fewer vCPUs (e.g., A100 PCIe with 8) will be slower in both modes due to QTGMC.
 
 ## Documentation
 
 - [Pipeline details](docs/PIPELINE.md) -- 10-step restoration process explained
 - [Multi-GPU batch processing](docs/MULTI-GPU.md) -- parallel processing across GPUs
-- [Runpod deployment](docs/DEPLOYMENT.md) -- pod setup, templates, cost estimates
+- [Runpod deployment](docs/RUNPOD.md) -- pod setup, templates, cost estimates
+- [Building the Docker image](docs/BUILD.md) -- buildx, CUDA variants, build architecture

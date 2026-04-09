@@ -2,56 +2,10 @@
 
 ## Prerequisites
 
-- Docker image: `ghcr.io/viktorstiskala/vhs-upscale:cu128` (or build your own)
-- `2xVHS2HD-RealPLKSR.pth` model file (~29MB)
+- Docker image: `ghcr.io/viktorstiskala/vhs-upscale:cu128` (see [BUILD.md](BUILD.md) for building from source)
 - Source AVI files on local machine or accessible URL
 
-## 1. Docker Image
-
-A pre-built image is available on GitHub Container Registry:
-
-```bash
-docker pull ghcr.io/viktorstiskala/vhs-upscale:cu128
-```
-
-Or build it yourself (uses multi-stage parallel build — requires BuildKit):
-
-```bash
-# Recommended: buildx (parallel stages, fastest)
-docker buildx build -t ghcr.io/viktorstiskala/vhs-upscale:cu128 --load .
-docker push ghcr.io/viktorstiskala/vhs-upscale:cu128
-
-# Alternative: DOCKER_BUILDKIT=1 also enables parallel stages
-DOCKER_BUILDKIT=1 docker build -t ghcr.io/viktorstiskala/vhs-upscale:cu128 .
-```
-
-The Dockerfile uses multi-stage builds so PyTorch download, FFmpeg compilation, and plugin builds run in parallel. BuildKit is required to take advantage of this.
-
-CUDA 12.8 with cu128 natively supports all target GPUs including Blackwell (SM120). The image includes compiled GPU code for SM75 through SM120 — no JIT compilation needed.
-
-### Supported GPUs
-
-| GPU | Architecture | SM | VRAM | Driver | Status |
-|-----|-------------|-----|------|--------|--------|
-| A100 SXM/PCIe | Ampere | 80 | 80 GB | R570+ | Tested |
-| H100 SXM/PCIe | Hopper | 90 | 80 GB | R570+ | Tested |
-| **RTX 5090** | **Blackwell** | **120** | **32 GB** | **R570+** | Supported |
-| **RTX Pro 6000** | **Blackwell** | **120** | **96 GB** | **R570+** | Supported |
-| RTX 4090 | Ada | 89 | 24 GB | R570+ | Supported (24GB tight) |
-
-**Multi-GPU pods (e.g., 2x RTX 5090):** Use `batch_upscale.sh` to process multiple videos in parallel — see section 6.
-
-**Optional: CUDA 13.0 build** (if specific 13.x features are needed):
-```bash
-docker buildx build \
-  --build-arg CUDA_TAG=13.0.2-cudnn-devel-ubuntu24.04 \
-  --build-arg CU_TAG=cu130 \
-  -t ghcr.io/viktorstiskala/vhs-upscale:cu130 --load .
-docker push ghcr.io/viktorstiskala/vhs-upscale:cu130
-```
-Requires driver R580+. Only needed for FP4/FP8 advanced CUDA features (not used in current pipeline).
-
-## 2. Create Runpod Template
+## 1. Create Runpod Template
 
 1. Go to [Runpod Templates](https://www.runpod.io/console/user/templates)
 2. Click **New Template**
@@ -65,7 +19,7 @@ Requires driver R580+. Only needed for FP4/FP8 advanced CUDA features (not used 
    - **Expose HTTP Ports:** (none needed)
    - **Expose TCP Ports:** 22 (for SSH access)
 
-## 3. Launch a Pod
+## 2. Launch a Pod
 
 1. Go to [Runpod GPU Cloud](https://www.runpod.io/console/gpu-cloud)
 2. Select **On-Demand** (NOT Spot — spot instances terminate with 5s warning)
@@ -76,7 +30,7 @@ Requires driver R580+. Only needed for FP4/FP8 advanced CUDA features (not used 
 4. Select your template
 5. Click **Deploy**
 
-## 4. Verify Installation
+## 3. Verify Installation
 
 SSH into the pod (or use Runpod's web terminal) and run the setup verification script:
 
@@ -86,30 +40,20 @@ setup.sh
 
 This checks: GPU availability, PyTorch + CUDA, VapourSynth plugins, AI models, disk space. Fix any issues it reports before proceeding.
 
-## 5. Upload Files
+## 4. Upload Files
 
-Use Runpod's web terminal or SSH (if enabled). For large files (40GB+ AVI), use `runpodctl` for faster transfers.
+The `2xVHS2HD-RealPLKSR.pth` model is automatically downloaded by `setup.sh`. You only need to upload your source videos.
+
+For large files (40GB+ AVI), use `runpodctl` for faster transfers:
 
 ```bash
-# Create directories (setup.sh already does this, but just in case)
-mkdir -p /workspace/models /workspace/input /workspace/output
-
-# Upload your VHS2HD model (~29MB)
-# Option A: runpodctl (fastest, Runpod's own tool — install on local machine first)
-runpodctl send 2xVHS2HD-RealPLKSR.pth  # On local machine — gives you a code
-runpodctl receive <code>                 # On pod — downloads the file
-mv 2xVHS2HD-RealPLKSR.pth /workspace/models/
-
-# Option B: Download from URL (if hosted somewhere)
-wget -O /workspace/models/2xVHS2HD-RealPLKSR.pth "<your-model-url>"
-
-# Option C: rclone from cloud storage (S3, GCS, etc.)
-# rclone copy remote:bucket/2xVHS2HD-RealPLKSR.pth /workspace/models/
-
 # Upload source video (40GB+ — runpodctl recommended)
 runpodctl send scene0001.avi             # On local machine
 runpodctl receive <code>                  # On pod
 mv scene0001.avi /workspace/input/
+
+# Alternative: s5cmd from S3-compatible storage
+s5cmd cp s3://bucket/scene0001.avi /workspace/input/
 ```
 
 **Transfer time estimates:**
@@ -117,7 +61,7 @@ mv scene0001.avi /workspace/input/
 - 40GB AVI via `runpodctl`: ~10-20 minutes (Runpod network)
 - 40GB AVI via SCP at 20 Mbps home upload: ~4-5 hours
 
-## 6. Run the Pipeline
+## 5. Run the Pipeline
 
 ```bash
 # Basic usage
@@ -177,14 +121,14 @@ GPUS="0,1" batch_upscale.sh /workspace/input /workspace/output
 
 **2x RTX 5090 example:** With 2 GPUs and 10 tapes, 2 tapes process simultaneously. Total time ≈ 5 × single-GPU time instead of 10×.
 
-## 7. Expected Output
+## 6. Expected Output
 
 - **Input:** 720x576i PAL DV, 25fps interlaced, ~40GB AVI
 - **Output:** 2880x2304p, 50fps progressive, YUV420P10, HEVC in MKV
 - **Size:** ~35-55GB at CRF 20 (default), larger at lower CRF values
 - **Aspect ratio:** 4:3 (SAR 16:15 preserved)
 
-## 8. Cost Estimates
+## 7. Cost Estimates
 
 Processing ~3 hours of PAL VHS content (278K source frames -> 556K output frames after bob):
 
@@ -212,7 +156,7 @@ The pipeline throughput is limited by the **slowest stage**. With 4x upscaling (
 - ~35-55GB per 3hr tape (HEVC 2880x2304 50fps)
 - ~20-30GB per 3hr tape with 2x only (HEVC 1440x1152 50fps)
 
-## 9. Troubleshooting
+## 8. Troubleshooting
 
 ### "Model not found" error
 Ensure `2xVHS2HD-RealPLKSR.pth` is in `/workspace/models/`. Built-in models are in `/models/`.
@@ -239,7 +183,7 @@ x265 tries NUMA-aware thread pinning via the `set_mempolicy` syscall, which Dock
 ### vspipe not working
 If vspipe fails, the script automatically falls back to a Python Y4M pipe. No action needed.
 
-## 10. After Processing
+## 9. After Processing
 
 Download the output:
 ```bash

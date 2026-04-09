@@ -154,6 +154,7 @@ RUN cd /tmp && git clone --depth 1 https://github.com/vapoursynth/vapoursynth.gi
     && mkdir -p /usr/local/lib/pkgconfig \
     && cat > /usr/local/lib/pkgconfig/vapoursynth.pc <<PKGEOF
 prefix=/usr/local
+libdir=/opt/vs-plugins
 includedir=/usr/local/include/vapoursynth
 
 Name: VapourSynth
@@ -230,6 +231,12 @@ RUN cd /tmp && git clone --depth 1 https://github.com/Khanattila/KNLMeansCL \
     && find build -name "*.so" -exec cp {} /opt/vs-plugins/ \; \
     && rm -rf /tmp/KNLMeansCL \
     || echo "KNLMeansCL build failed, chroma denoise may be limited"
+
+# Collect plugins that installed to subdirectories (e.g., /opt/vs-plugins/vapoursynth/)
+# or to default system paths instead of /opt/vs-plugins/
+RUN find /opt/vs-plugins -mindepth 2 -name "*.so" -exec mv {} /opt/vs-plugins/ \; 2>/dev/null || true \
+    && find /usr/local/lib -maxdepth 3 -name "*.so" ! -path "*/python*" \
+       -newer /usr/local/include/vapoursynth -exec cp -n {} /opt/vs-plugins/ \; 2>/dev/null || true
 
 # ============================================================
 # Final stage: merge everything

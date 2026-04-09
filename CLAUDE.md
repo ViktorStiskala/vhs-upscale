@@ -11,7 +11,7 @@ AI-powered VHS restoration and 4x upscaling pipeline running on Runpod GPU pods.
 | `upscale.sh` | Entry point: `./upscale.sh input.avi [output.mkv]` |
 | `batch_upscale.sh` | Multi-GPU batch processing: distributes videos across GPUs |
 | `setup.sh` | First-run setup: verifies GPU, plugins, models, creates /workspace dirs |
-| `docs/DEPLOYMENT.md` | Runpod setup, volume config, running instructions |
+| `docs/RUNPOD.md` | Runpod setup, volume config, running instructions |
 
 ## Pipeline
 
@@ -50,7 +50,7 @@ One image works for ALL supported GPUs. CUDA 12.8 + cu128 supports:
 - RTX 5090/RTX Pro 6000 (SM120 Blackwell) — driver R570+
 - SM120 in CUDA architecture targets. Custom GPU plugins (vs-nlm-cuda) compiled natively for Blackwell
 
-Run on Runpod: see `docs/DEPLOYMENT.md`
+Run on Runpod: see `docs/RUNPOD.md`
 
 ## Runpod Conventions
 
