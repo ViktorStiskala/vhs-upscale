@@ -100,6 +100,22 @@ RUN VS_DIR=$(python3 -c "import vapoursynth; print(vapoursynth.__path__[0])")/pl
     && find /usr -name "libffms2.so*" -exec ln -sf {} "${VS_DIR}/" \; 2>/dev/null || true \
     && echo "${VS_DIR}" > /tmp/vs_plugin_dir
 
+# Generate pkg-config file for pip-installed VapourSynth so native plugins can find it
+RUN VS_INCLUDE=$(python3 -c "import vapoursynth; import os; print(os.path.join(vapoursynth.__path__[0], 'include'))") \
+    && VS_LIB=$(python3 -c "import vapoursynth; import os; print(os.path.dirname(vapoursynth.__path__[0]))") \
+    && VS_VERSION=$(python3 -c "import vapoursynth; print(vapoursynth.__api_version__.api_major)") \
+    && mkdir -p /usr/local/lib/pkgconfig \
+    && cat > /usr/local/lib/pkgconfig/vapoursynth.pc <<PKGEOF
+prefix=/usr/local
+libdir=${VS_LIB}
+includedir=${VS_INCLUDE}
+
+Name: VapourSynth
+Description: VapourSynth (pip)
+Version: ${VS_VERSION}
+Cflags: -I\${includedir}
+PKGEOF
+
 # ============================================================
 # VapourSynth native plugins (build from source)
 # ============================================================
