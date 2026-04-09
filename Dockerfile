@@ -100,19 +100,24 @@ RUN VS_DIR=$(python3 -c "import vapoursynth; print(vapoursynth.__path__[0])")/pl
     && find /usr -name "libffms2.so*" -exec ln -sf {} "${VS_DIR}/" \; 2>/dev/null || true \
     && echo "${VS_DIR}" > /tmp/vs_plugin_dir
 
-# Generate pkg-config file for pip-installed VapourSynth so native plugins can find it
-RUN VS_INCLUDE=$(python3 -c "import vapoursynth; import os; print(os.path.join(vapoursynth.__path__[0], 'include'))") \
-    && VS_LIB=$(python3 -c "import vapoursynth; import os; print(os.path.dirname(vapoursynth.__path__[0]))") \
-    && VS_VERSION=$(python3 -c "import vapoursynth; print(vapoursynth.__api_version__.api_major)") \
+# Install VapourSynth C headers + generate pkg-config file.
+# The pip wheel doesn't ship headers, so fetch them from the matching release.
+RUN VS_VERSION=$(python3 -c "import vapoursynth; print(vapoursynth.__version__)") \
+    && VS_API=$(python3 -c "import vapoursynth; print(vapoursynth.__api_version__.api_major)") \
+    && VS_LIB=$(python3 -c "import vapoursynth, os; print(os.path.dirname(vapoursynth.__path__[0]))") \
+    && mkdir -p /usr/local/include/vapoursynth \
+    && cd /tmp && git clone --depth 1 --branch R${VS_VERSION} https://github.com/vapoursynth/vapoursynth.git vs-headers \
+    && cp vs-headers/include/*.h /usr/local/include/vapoursynth/ \
+    && rm -rf /tmp/vs-headers \
     && mkdir -p /usr/local/lib/pkgconfig \
     && cat > /usr/local/lib/pkgconfig/vapoursynth.pc <<PKGEOF
 prefix=/usr/local
 libdir=${VS_LIB}
-includedir=${VS_INCLUDE}
+includedir=/usr/local/include/vapoursynth
 
 Name: VapourSynth
 Description: VapourSynth (pip)
-Version: ${VS_VERSION}
+Version: ${VS_API}
 Cflags: -I\${includedir}
 PKGEOF
 
