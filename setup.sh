@@ -215,7 +215,7 @@ import torch
 x = torch.randn(1, 3, 64, 64).cuda()
 y = torch.nn.Conv2d(3, 3, 3, padding=1).cuda()(x)
 gpu_name = torch.cuda.get_device_name(0)
-vram_gb = torch.cuda.get_device_properties(0).total_mem / 1e9
+vram_gb = torch.cuda.get_device_properties(0).total_memory / 1e9
 cc = torch.cuda.get_device_capability(0)
 print(f'  \033[0;32m✓\033[0m GPU inference OK ({gpu_name}, {vram_gb:.0f} GB, SM{cc[0]}{cc[1]})')
 " 2>/dev/null || fail "GPU inference failed!"

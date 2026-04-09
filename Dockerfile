@@ -195,13 +195,12 @@ RUN cd /tmp && git clone --recursive https://github.com/sekrit-twc/znedi3 \
     && cp nnedi3_weights.bin /opt/vs-plugins/ \
     && rm -rf /tmp/znedi3
 
-# resize2 (advanced resizer for vsjetpack)
+# resize2 (required by vsjetpack kernel system — Bicubic, Point, Spline, etc.)
 RUN cd /tmp && git clone --depth 1 https://github.com/Jaded-Encoding-Thaumaturgy/vapoursynth-resize2 \
     && cd vapoursynth-resize2 \
     && meson setup build --buildtype=release --libdir=/opt/vs-plugins \
     && ninja -C build && DESTDIR="" ninja -C build install \
-    && rm -rf /tmp/vapoursynth-resize2 \
-    || echo "resize2 build failed (may be built-in to R74), skipping"
+    && rm -rf /tmp/vapoursynth-resize2
 
 # CAS (Contrast Adaptive Sharpening — AMD FidelityFX CAS for VapourSynth)
 RUN cd /tmp && git clone --depth 1 https://github.com/HomeOfVapourSynthEvolution/VapourSynth-CAS \
@@ -327,6 +326,7 @@ RUN echo "=== Verifying installation ===" \
     assert 'fmtc' in plugins, 'fmtconv not loaded!'; \
     assert 'znedi3' in plugins, 'znedi3 not loaded!'; \
     assert 'dfttest' in plugins, 'DFTTest native plugin not loaded!'; \
+    assert 'resize2' in plugins, 'resize2 not loaded (required by vsjetpack)!'; \
     assert 'ffms2' in plugins or 'bs' in plugins, 'No source plugin (ffms2/bestsource) loaded!'; \
     has_nlm = 'nlm_cuda' in plugins or 'knlm' in plugins; \
     print(f'NLM denoiser: {\"nlm_cuda\" if \"nlm_cuda\" in plugins else \"knlm\" if \"knlm\" in plugins else \"NONE\"}'); \

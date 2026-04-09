@@ -210,8 +210,8 @@ eval "$VSPIPE_CMD" | ffmpeg -y \
     -c:a flac \
     "$OUTPUT_FILE"
 
-EXIT_CODE=${PIPESTATUS[0]}  # Capture vspipe exit code (first in pipe)
-FFMPEG_EXIT=${PIPESTATUS[1]}
+EXIT_CODE=${PIPESTATUS[0]:-1}  # Capture vspipe exit code (first in pipe)
+FFMPEG_EXIT=${PIPESTATUS[1]:-1}
 set -e
 
 echo ""
