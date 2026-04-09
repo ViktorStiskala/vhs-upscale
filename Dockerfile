@@ -1,9 +1,9 @@
 # syntax=docker/dockerfile:1
-# VHS Restoration Pipeline - Docker Image
+# VHS Restoration Pipeline - Docker Image (multi-stage parallel build)
 # Base: NVIDIA CUDA with cuDNN for GPU-accelerated video processing
 #
-# Build:
-#   docker build -t vhs-restore .
+# Build (requires BuildKit for parallel stages):
+#   docker buildx build -t ghcr.io/viktorstiskala/vhs-upscale:cu128 --load .
 #
 # One image works for ALL supported GPUs (A100, H100, RTX 5090, RTX Pro 6000).
 # CUDA 12.8 supports SM120 (Blackwell) natively — no separate build needed.
@@ -18,7 +18,11 @@
 #   CUDA 13.0 (driver 580+): --build-arg CUDA_TAG=13.0.2-cudnn-devel-ubuntu24.04 --build-arg CU_TAG=cu130
 
 ARG CUDA_TAG=12.8.0-cudnn-devel-ubuntu24.04
-FROM nvidia/cuda:${CUDA_TAG}
+
+# ============================================================
+# Base stage: system packages shared by all stages
+# ============================================================
+FROM nvidia/cuda:${CUDA_TAG} AS base
 
 LABEL org.opencontainers.image.source=https://github.com/ViktorStiskala/vhs-upscale
 
@@ -31,9 +35,6 @@ ENV PYTHONUNBUFFERED=1
 ENV CFLAGS="-O2 -march=x86-64-v2 -mtune=generic"
 ENV CXXFLAGS="-O2 -march=x86-64-v2 -mtune=generic"
 
-# ============================================================
-# System packages
-# ============================================================
 RUN apt-get update && apt-get install -y --no-install-recommends \
     # Python 3.12 (Ubuntu 24.04 default — matches VapourSynth R74 + PyTorch 2.11 recommended)
     python3 python3-pip python3-dev \
@@ -61,50 +62,26 @@ RUN curl -fsSL https://github.com/peak/s5cmd/releases/download/v2.3.0/s5cmd_2.3.
     | tar -xz -C /usr/local/bin s5cmd
 
 # ============================================================
-# Python packages - PyTorch
+# Parallel stage: Python packages (PyTorch + VapourSynth ecosystem)
 # ============================================================
+FROM base AS stage-python
+
 ARG CU_TAG=cu128
-# CUDA architectures for GPU-accelerated plugins (vs-nlm-cuda)
-# Covers Turing through Blackwell. SM120 = RTX 5090 / RTX Pro 6000.
-# SM100 = datacenter Blackwell (B100/B200) — add if deploying there.
-ARG CUDA_ARCHS="75;80;86;89;90;120"
 
 # PyTorch (no version pin — CUDA index resolves latest compatible)
 RUN pip install --break-system-packages \
     torch torchvision \
     --index-url https://download.pytorch.org/whl/${CU_TAG}
 
-# ============================================================
-# Python packages - VapourSynth ecosystem
-# ============================================================
-
 # VapourSynth R74+ (pip installable, Python 3.12+)
 RUN pip install --break-system-packages vapoursynth \
     && vapoursynth config || true
 
-# vsjetpack (QTGMC via QTempGaussMC, DFTTest, kernels, tools)
+# VS Python plugins
 RUN pip install --break-system-packages jetpytools vsjetpack
-
-# AI inference - vsspandrel for loading .pth models directly
-# NOTE: vsspandrel is NOT published to PyPI — must install from GitHub
 RUN pip install --break-system-packages git+https://github.com/TNTwise/vs-spandrel.git
-
-# SCUNet denoiser (HolyWu's dedicated plugin)
 RUN pip install --break-system-packages vsscunet
-
-# Spandrel model loading library
 RUN pip install --break-system-packages spandrel spandrel-extra-arches
-
-# Tell VapourSynth R74 to also search the standard plugin install path.
-# Meson-based plugins install to /usr/local/lib/vapoursynth/ by default,
-# but R74 only auto-loads from its package subdirectory.
-ENV VAPOURSYNTH_EXTRA_PLUGIN_PATH=/usr/local/lib/vapoursynth
-
-# Also symlink ffms2 from system into VS plugin dir
-RUN VS_DIR=$(python3 -c "import vapoursynth; print(vapoursynth.__path__[0])")/plugins \
-    && mkdir -p "${VS_DIR}" \
-    && find /usr -name "libffms2.so*" -exec ln -sf {} "${VS_DIR}/" \; 2>/dev/null || true \
-    && echo "${VS_DIR}" > /tmp/vs_plugin_dir
 
 # Install VapourSynth C headers + generate pkg-config file.
 # The pip wheel doesn't ship headers, so fetch them from the matching release.
@@ -128,97 +105,21 @@ Cflags: -I\${includedir}
 PKGEOF
 
 # ============================================================
-# VapourSynth native plugins (build from source)
+# Parallel stage: FFmpeg from source
 # ============================================================
-
-# DFTTest (required by vsdenoise/DFTTest wrapper used in QTGMC temporal denoise)
-# CPU version uses FFTW3 (libfftw3-dev already installed)
-RUN cd /tmp && git clone --depth 1 https://github.com/HomeOfVapourSynthEvolution/VapourSynth-DFTTest \
-    && cd VapourSynth-DFTTest \
-    && meson setup build --buildtype=release \
-    && ninja -C build && ninja -C build install \
-    && rm -rf /tmp/VapourSynth-DFTTest
-
-# mvtools (motion estimation for QTGMC)
-# Must specify --libdir — mvtools' meson.build doesn't query VS plugindir
-RUN cd /tmp && git clone --depth 1 https://github.com/dubhater/vapoursynth-mvtools \
-    && cd vapoursynth-mvtools \
-    && mkdir -p vapoursynth/include && ln -s /usr/local/include/vapoursynth/*.h vapoursynth/include/ \
-    && meson setup build --buildtype=release --libdir=/usr/local/lib/vapoursynth \
-    && ninja -C build && ninja -C build install \
-    && rm -rf /tmp/vapoursynth-mvtools
-
-# fmtconv (format conversion, chroma shift correction)
-# Must specify --libdir — autotools defaults to /usr/local/lib/ which R74 doesn't search
-RUN cd /tmp && git clone --depth 1 https://gitlab.com/EleonoreMizo/fmtconv.git \
-    && cd fmtconv/build/unix \
-    && ./autogen.sh && ./configure --libdir=/usr/local/lib/vapoursynth \
-    && make -j$(nproc) && make install \
-    && rm -rf /tmp/fmtconv
-
-# znedi3 (neural net edge-directed interpolation for QTGMC)
-RUN cd /tmp && git clone --recursive https://github.com/sekrit-twc/znedi3 \
-    && cd znedi3 \
-    && if [ "$(uname -m)" = "x86_64" ]; then make X86=1; else make; fi \
-    && VS_DIR=$(cat /tmp/vs_plugin_dir) \
-    && cp vsznedi3.so "${VS_DIR}/" \
-    && cp nnedi3_weights.bin "${VS_DIR}/" \
-    && rm -rf /tmp/znedi3
-
-# resize2 (advanced resizer for vsjetpack)
-RUN cd /tmp && git clone --depth 1 https://github.com/Jaded-Encoding-Thaumaturgy/vapoursynth-resize2 \
-    && cd vapoursynth-resize2 \
-    && meson setup build --buildtype=release --libdir=/usr/local/lib/vapoursynth \
-    && ninja -C build && ninja -C build install \
-    && rm -rf /tmp/vapoursynth-resize2 \
-    || echo "resize2 build failed (may be built-in to R74), skipping"
-
-# CAS (Contrast Adaptive Sharpening — AMD FidelityFX CAS for VapourSynth)
-RUN cd /tmp && git clone --depth 1 https://github.com/HomeOfVapourSynthEvolution/VapourSynth-CAS \
-    && cd VapourSynth-CAS \
-    && meson setup build --buildtype=release --libdir=/usr/local/lib/vapoursynth \
-    && ninja -C build && ninja -C build install \
-    && rm -rf /tmp/VapourSynth-CAS \
-    || echo "CAS build failed, will skip sharpening"
-
-# vs-nlm-cuda (CUDA NLM denoiser — preferred over OpenCL KNLMeansCL)
-# Must include SM90 for H100 Hopper GPU architecture
-RUN cd /tmp && git clone --depth 1 https://github.com/AmusementClub/vs-nlm-cuda \
-    && cd vs-nlm-cuda \
-    && cmake -B build -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_CUDA_FLAGS="--use_fast_math" \
-    -DCMAKE_CUDA_ARCHITECTURES="${CUDA_ARCHS}" \
-    -DCMAKE_INSTALL_LIBDIR=/usr/local/lib/vapoursynth \
-    && cmake --build build -j$(nproc) \
-    && cmake --install build \
-    && rm -rf /tmp/vs-nlm-cuda \
-    || echo "vs-nlm-cuda build failed, will fall back to KNLMeansCL"
-
-# KNLMeansCL (OpenCL fallback for chroma denoising)
-# Note: uses meson build system, NOT cmake
-RUN cd /tmp && git clone --depth 1 https://github.com/Khanattila/KNLMeansCL \
-    && cd KNLMeansCL \
-    && meson setup build --buildtype=release \
-    && ninja -C build \
-    && VS_DIR=$(cat /tmp/vs_plugin_dir) \
-    && find build -name "*.so" -exec cp {} "${VS_DIR}/" \; \
-    && rm -rf /tmp/KNLMeansCL \
-    || echo "KNLMeansCL build failed, chroma denoise may be limited"
-
-# ============================================================
-# FFmpeg (built from source for architecture safety + full codec support)
-# ============================================================
+FROM base AS stage-ffmpeg
 
 # NVIDIA codec headers (NVENC/NVDEC hardware acceleration)
-# Use GitHub mirror — more reliable than git.videolan.org
 RUN cd /tmp && git clone --depth 1 https://github.com/FFmpeg/nv-codec-headers.git \
-    && cd nv-codec-headers && make && make install \
+    && cd nv-codec-headers && make PREFIX=/opt/ffmpeg && make PREFIX=/opt/ffmpeg install \
     && rm -rf /tmp/nv-codec-headers
+
+ENV PKG_CONFIG_PATH="/opt/ffmpeg/lib/pkgconfig:${PKG_CONFIG_PATH}"
 
 RUN cd /tmp && git clone --depth 1 https://git.ffmpeg.org/ffmpeg.git ffmpeg-src \
     && cd ffmpeg-src \
     && ./configure \
-    --prefix=/usr/local \
+    --prefix=/opt/ffmpeg \
     --enable-gpl --enable-nonfree \
     --enable-libx264 --enable-libx265 --enable-libvpx \
     --enable-libopus --enable-libvorbis --enable-libmp3lame \
@@ -231,11 +132,132 @@ RUN cd /tmp && git clone --depth 1 https://git.ffmpeg.org/ffmpeg.git ffmpeg-src 
     --enable-shared --disable-static \
     && make -j$(nproc) \
     && make install \
-    && rm -rf /tmp/ffmpeg-src \
-    && ldconfig
+    && rm -rf /tmp/ffmpeg-src
 
-# BestSource (video source plugin — built AFTER FFmpeg so it links our custom build)
-# Official VapourSynth team repo, preferred over deprecated L-SMASH-Works
+# ============================================================
+# Parallel stage: Native VapourSynth plugins (CPU + CUDA)
+# ============================================================
+FROM base AS stage-plugins
+
+ARG CUDA_ARCHS="75;80;86;89;90;120"
+
+# Fetch VapourSynth headers directly (independent of pip install)
+RUN cd /tmp && git clone --depth 1 https://github.com/vapoursynth/vapoursynth.git vs-headers \
+    && mkdir -p /usr/local/include/vapoursynth \
+    && cp vs-headers/include/*.h /usr/local/include/vapoursynth/ \
+    && rm -rf /tmp/vs-headers \
+    && mkdir -p /usr/local/lib/pkgconfig \
+    && cat > /usr/local/lib/pkgconfig/vapoursynth.pc <<PKGEOF
+prefix=/usr/local
+includedir=/usr/local/include/vapoursynth
+
+Name: VapourSynth
+Description: VapourSynth (headers only for plugin builds)
+Version: 4
+Cflags: -I\${includedir}
+PKGEOF
+
+RUN mkdir -p /opt/vs-plugins
+
+# DFTTest (required by vsdenoise/DFTTest wrapper used in QTGMC temporal denoise)
+RUN cd /tmp && git clone --depth 1 https://github.com/HomeOfVapourSynthEvolution/VapourSynth-DFTTest \
+    && cd VapourSynth-DFTTest \
+    && meson setup build --buildtype=release --libdir=/opt/vs-plugins \
+    && ninja -C build && DESTDIR="" ninja -C build install \
+    && rm -rf /tmp/VapourSynth-DFTTest
+
+# mvtools (motion estimation for QTGMC)
+RUN cd /tmp && git clone --depth 1 https://github.com/dubhater/vapoursynth-mvtools \
+    && cd vapoursynth-mvtools \
+    && mkdir -p vapoursynth/include && ln -s /usr/local/include/vapoursynth/*.h vapoursynth/include/ \
+    && meson setup build --buildtype=release --libdir=/opt/vs-plugins \
+    && ninja -C build && DESTDIR="" ninja -C build install \
+    && rm -rf /tmp/vapoursynth-mvtools
+
+# fmtconv (format conversion, chroma shift correction)
+RUN cd /tmp && git clone --depth 1 https://gitlab.com/EleonoreMizo/fmtconv.git \
+    && cd fmtconv/build/unix \
+    && ./autogen.sh && ./configure --libdir=/opt/vs-plugins \
+    && make -j$(nproc) && make install \
+    && rm -rf /tmp/fmtconv
+
+# znedi3 (neural net edge-directed interpolation for QTGMC)
+RUN cd /tmp && git clone --recursive https://github.com/sekrit-twc/znedi3 \
+    && cd znedi3 \
+    && if [ "$(uname -m)" = "x86_64" ]; then make X86=1; else make; fi \
+    && cp vsznedi3.so /opt/vs-plugins/ \
+    && cp nnedi3_weights.bin /opt/vs-plugins/ \
+    && rm -rf /tmp/znedi3
+
+# resize2 (advanced resizer for vsjetpack)
+RUN cd /tmp && git clone --depth 1 https://github.com/Jaded-Encoding-Thaumaturgy/vapoursynth-resize2 \
+    && cd vapoursynth-resize2 \
+    && meson setup build --buildtype=release --libdir=/opt/vs-plugins \
+    && ninja -C build && DESTDIR="" ninja -C build install \
+    && rm -rf /tmp/vapoursynth-resize2 \
+    || echo "resize2 build failed (may be built-in to R74), skipping"
+
+# CAS (Contrast Adaptive Sharpening — AMD FidelityFX CAS for VapourSynth)
+RUN cd /tmp && git clone --depth 1 https://github.com/HomeOfVapourSynthEvolution/VapourSynth-CAS \
+    && cd VapourSynth-CAS \
+    && meson setup build --buildtype=release --libdir=/opt/vs-plugins \
+    && ninja -C build && DESTDIR="" ninja -C build install \
+    && rm -rf /tmp/VapourSynth-CAS \
+    || echo "CAS build failed, will skip sharpening"
+
+# vs-nlm-cuda (CUDA NLM denoiser — preferred over OpenCL KNLMeansCL)
+RUN cd /tmp && git clone --depth 1 https://github.com/AmusementClub/vs-nlm-cuda \
+    && cd vs-nlm-cuda \
+    && cmake -B build -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_CUDA_FLAGS="--use_fast_math" \
+    -DCMAKE_CUDA_ARCHITECTURES="${CUDA_ARCHS}" \
+    -DCMAKE_INSTALL_LIBDIR=/opt/vs-plugins \
+    && cmake --build build -j$(nproc) \
+    && cmake --install build \
+    && rm -rf /tmp/vs-nlm-cuda \
+    || echo "vs-nlm-cuda build failed, will fall back to KNLMeansCL"
+
+# KNLMeansCL (OpenCL fallback for chroma denoising)
+RUN cd /tmp && git clone --depth 1 https://github.com/Khanattila/KNLMeansCL \
+    && cd KNLMeansCL \
+    && meson setup build --buildtype=release \
+    && ninja -C build \
+    && find build -name "*.so" -exec cp {} /opt/vs-plugins/ \; \
+    && rm -rf /tmp/KNLMeansCL \
+    || echo "KNLMeansCL build failed, chroma denoise may be limited"
+
+# ============================================================
+# Final stage: merge everything
+# ============================================================
+FROM base AS final
+
+# Copy Python packages (PyTorch + VapourSynth ecosystem)
+COPY --from=stage-python /usr/local/lib/python3.12/dist-packages /usr/local/lib/python3.12/dist-packages
+COPY --from=stage-python /usr/local/bin/vspipe /usr/local/bin/vspipe
+COPY --from=stage-python /usr/local/include/vapoursynth /usr/local/include/vapoursynth
+COPY --from=stage-python /usr/local/lib/pkgconfig/vapoursynth.pc /usr/local/lib/pkgconfig/vapoursynth.pc
+
+# Copy FFmpeg (binaries + shared libraries)
+COPY --from=stage-ffmpeg /opt/ffmpeg/bin/ /usr/local/bin/
+COPY --from=stage-ffmpeg /opt/ffmpeg/lib/ /usr/local/lib/
+COPY --from=stage-ffmpeg /opt/ffmpeg/include/ /usr/local/include/
+COPY --from=stage-ffmpeg /opt/ffmpeg/share/ /usr/local/share/
+
+# Copy native VapourSynth plugins
+COPY --from=stage-plugins /opt/vs-plugins/ /usr/local/lib/vapoursynth/
+
+# Refresh shared library cache after all COPYs
+RUN ldconfig
+
+# Tell VapourSynth R74 to also search the standard plugin install path.
+ENV VAPOURSYNTH_EXTRA_PLUGIN_PATH=/usr/local/lib/vapoursynth
+
+# Symlink ffms2 from system into VS plugin dir
+RUN VS_DIR=$(python3 -c "import vapoursynth; print(vapoursynth.__path__[0])")/plugins \
+    && mkdir -p "${VS_DIR}" \
+    && find /usr -name "libffms2.so*" -exec ln -sf {} "${VS_DIR}/" \; 2>/dev/null || true
+
+# BestSource (needs both FFmpeg and VapourSynth — built after merge)
 RUN cd /tmp && git clone --recursive --depth 1 https://github.com/vapoursynth/bestsource \
     && cd bestsource \
     && meson setup build --buildtype=release \

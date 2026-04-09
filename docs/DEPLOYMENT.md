@@ -14,12 +14,18 @@ A pre-built image is available on GitHub Container Registry:
 docker pull ghcr.io/viktorstiskala/vhs-upscale:cu128
 ```
 
-Or build it yourself:
+Or build it yourself (uses multi-stage parallel build — requires BuildKit):
 
 ```bash
-docker build -t ghcr.io/viktorstiskala/vhs-upscale:cu128 .
+# Recommended: buildx (parallel stages, fastest)
+docker buildx build -t ghcr.io/viktorstiskala/vhs-upscale:cu128 --load .
 docker push ghcr.io/viktorstiskala/vhs-upscale:cu128
+
+# Alternative: DOCKER_BUILDKIT=1 also enables parallel stages
+DOCKER_BUILDKIT=1 docker build -t ghcr.io/viktorstiskala/vhs-upscale:cu128 .
 ```
+
+The Dockerfile uses multi-stage builds so PyTorch download, FFmpeg compilation, and plugin builds run in parallel. BuildKit is required to take advantage of this.
 
 CUDA 12.8 with cu128 natively supports all target GPUs including Blackwell (SM120). The image includes compiled GPU code for SM75 through SM120 — no JIT compilation needed.
 
@@ -37,7 +43,10 @@ CUDA 12.8 with cu128 natively supports all target GPUs including Blackwell (SM12
 
 **Optional: CUDA 13.0 build** (if specific 13.x features are needed):
 ```bash
-docker build --build-arg CUDA_TAG=13.0.2-cudnn-devel-ubuntu24.04 --build-arg CU_TAG=cu130 -t ghcr.io/viktorstiskala/vhs-upscale:cu130 .
+docker buildx build \
+  --build-arg CUDA_TAG=13.0.2-cudnn-devel-ubuntu24.04 \
+  --build-arg CU_TAG=cu130 \
+  -t ghcr.io/viktorstiskala/vhs-upscale:cu130 --load .
 docker push ghcr.io/viktorstiskala/vhs-upscale:cu130
 ```
 Requires driver R580+. Only needed for FP4/FP8 advanced CUDA features (not used in current pipeline).
