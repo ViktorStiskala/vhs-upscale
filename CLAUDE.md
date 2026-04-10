@@ -12,6 +12,8 @@ AI-powered VHS restoration and 4x upscaling pipeline running on Runpod GPU pods.
 | `batch_upscale.sh` | Multi-GPU batch processing: distributes videos across GPUs |
 | `setup.sh` | First-run setup: verifies GPU, plugins, models, creates /workspace dirs |
 | `docs/RUNPOD.md` | Runpod setup, volume config, running instructions |
+| `tests/Dockerfile` | Test image: runs verify_deps.py against main image |
+| `tests/verify_deps.py` | Checks API signatures, VS plugins, paths inside Docker |
 
 ## Pipeline
 
@@ -85,31 +87,38 @@ can change without warning. The Dockerfile build-time verification only checks i
 it does NOT verify that specific function kwargs still exist. A kwarg rename upstream
 means a successful Docker build that fails at runtime.
 
-Run before Docker builds:
+### Running verification
+
+The test runs inside Docker against the actual installed packages using `inspect.signature()`:
 
 ```bash
-python3 verify_deps.py          # clone repos to .tmp/, check API signatures + paths
-python3 verify_deps.py --clean  # re-clone from scratch
+# Linux — build main image locally, then test
+docker build -t vhs-restore .
+docker build -f tests/Dockerfile --build-arg BASE_IMAGE=vhs-restore -t vhs-test .
+
+# macOS — pull amd64 image from registry, then test
+docker pull --platform linux/amd64 ghcr.io/viktorstiskala/vhs-upscale:cu128
+docker buildx build --platform linux/amd64 -f tests/Dockerfile -t vhs-test --load .
 ```
 
-The script:
-1. Clones upstream source of vs-spandrel, vs-jetpack, vs-scunet into `.tmp/`
-2. Parses their Python source with `ast` to extract function/class signatures
-3. Checks that every kwarg used in `upscale.vpy` still exists upstream
-4. Cross-references path defaults between `upscale.vpy`, `upscale.sh`, and `Dockerfile`
+The test image (`tests/Dockerfile`) uses the main image as base and runs `tests/verify_deps.py` which checks:
+1. All Python imports succeed (vsspandrel, vsjetpack, vsscunet, torch, etc.)
+2. Function/class signatures have required kwargs (`inspect.signature()` on real code)
+3. VapourSynth native plugins load (required + optional namespaces)
+4. Filesystem paths exist (models, plugins, scripts, binaries)
+5. Path defaults are consistent across `upscale.vpy`, `upscale.sh`, and `Dockerfile`
 
 ### When to run
 
-- Before every `docker build` (5 seconds vs 10+ min wasted build)
+- After every `docker build` (catches kwargs the build-time check misses)
 - After editing `upscale.vpy` function calls or kwargs
 - After changing pip install lines in Dockerfile
-- Periodically to catch upstream breakage early
 
 ### Maintaining the manifest
 
-When adding new API calls to `upscale.vpy`, add matching checks to the `REPOS` dict
-in `verify_deps.py`. Each check specifies: function/class name, required params, and
-a description linking to the `upscale.vpy` line number.
+When adding new API calls to `upscale.vpy`, add matching checks to `SIGNATURE_CHECKS`
+or `ENUM_CHECKS` in `tests/verify_deps.py`. Each check specifies: import path, callable,
+required params, and a description linking to the `upscale.vpy` line number.
 
 ### Path consistency rules
 
@@ -119,7 +128,7 @@ Path defaults must match across three files:
 - `Dockerfile`: `ADD ... /models/`, `mkdir -p /models`
 
 If changing any path in Dockerfile (models, plugins, scripts), update the matching
-defaults in `upscale.vpy` and `upscale.sh`, then run `verify_deps.py`.
+defaults in `upscale.vpy` and `upscale.sh`.
 
 ### Unpinned packages (fragile surface)
 
@@ -131,5 +140,4 @@ defaults in `upscale.vpy` and `upscale.sh`, then run `verify_deps.py`.
 | `spandrel` (PyPI) | Internal dep of vs-spandrel | Low — not called directly |
 
 Native C plugins (mvtools, fmtconv, znedi3, etc.) use the stable VapourSynth C API
-and are verified by the Dockerfile build-time assertions. They are NOT checked by
-`verify_deps.py`.
+and are verified by the Dockerfile build-time assertions.
