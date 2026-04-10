@@ -67,3 +67,69 @@ Run on Runpod: see `docs/RUNPOD.md`
 - AI models via vsspandrel (single-image) or dedicated plugins (temporal)
 - No TensorRT in this iteration — use PyTorch native inference (`trt=False`)
 - All native VS plugins (mvtools, fmtconv, znedi3, etc.) built from source in Docker
+
+## Dockerfile Gotchas
+
+- vsjetpack has undocumented hard dependencies on native plugins: `resize2`, `akarin`, `noise` — all must be built and verified
+- resize2's meson.build installs to Python site-packages (not --libdir); needs explicit copy to /opt/vs-plugins/
+- akarin plugin requires LLVM >= 10, < 16 (`llvm-15-dev` + `libzstd-dev` on Ubuntu 24.04)
+- vapoursynth.pc in stage-plugins must use release version (74), not API version (4) — vs-noise checks `>=55`
+- Never use `|| echo "... failed, skipping"` for plugins that vsjetpack requires — the error surfaces at runtime, not build time
+- Build-time verification (end of Dockerfile) must assert all required plugin namespaces
+- Test plugin builds locally: `docker run --rm nvidia/cuda:12.8.0-cudnn-devel-ubuntu24.04 bash -c "..."`
+
+## Dependency Verification
+
+Python wrapper packages (vsjetpack, vsscunet, vs-spandrel) are unpinned and their APIs
+can change without warning. The Dockerfile build-time verification only checks imports —
+it does NOT verify that specific function kwargs still exist. A kwarg rename upstream
+means a successful Docker build that fails at runtime.
+
+Run before Docker builds:
+
+```bash
+python3 verify_deps.py          # clone repos to .tmp/, check API signatures + paths
+python3 verify_deps.py --clean  # re-clone from scratch
+```
+
+The script:
+1. Clones upstream source of vs-spandrel, vs-jetpack, vs-scunet into `.tmp/`
+2. Parses their Python source with `ast` to extract function/class signatures
+3. Checks that every kwarg used in `upscale.vpy` still exists upstream
+4. Cross-references path defaults between `upscale.vpy`, `upscale.sh`, and `Dockerfile`
+
+### When to run
+
+- Before every `docker build` (5 seconds vs 10+ min wasted build)
+- After editing `upscale.vpy` function calls or kwargs
+- After changing pip install lines in Dockerfile
+- Periodically to catch upstream breakage early
+
+### Maintaining the manifest
+
+When adding new API calls to `upscale.vpy`, add matching checks to the `REPOS` dict
+in `verify_deps.py`. Each check specifies: function/class name, required params, and
+a description linking to the `upscale.vpy` line number.
+
+### Path consistency rules
+
+Path defaults must match across three files:
+- `upscale.vpy`: `os.environ.get("MODEL_DIR", "/models")`
+- `upscale.sh`: `MODEL_DIR="${MODEL_DIR:-/models}"`
+- `Dockerfile`: `ADD ... /models/`, `mkdir -p /models`
+
+If changing any path in Dockerfile (models, plugins, scripts), update the matching
+defaults in `upscale.vpy` and `upscale.sh`, then run `verify_deps.py`.
+
+### Unpinned packages (fragile surface)
+
+| Package | Provides | Risk |
+|---------|----------|------|
+| `vsjetpack` (PyPI) | `vsdeinterlace.QTempGaussMC`, `vsdenoise.DFTTest` | High — complex API with many kwargs |
+| `vsscunet` (PyPI) | `scunet`, `SCUNetModel` | Medium — enum members could change |
+| `vs-spandrel` (git) | `vsspandrel` | Medium — called 4x with model_path + trt |
+| `spandrel` (PyPI) | Internal dep of vs-spandrel | Low — not called directly |
+
+Native C plugins (mvtools, fmtconv, znedi3, etc.) use the stable VapourSynth C API
+and are verified by the Dockerfile build-time assertions. They are NOT checked by
+`verify_deps.py`.

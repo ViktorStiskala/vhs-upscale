@@ -149,9 +149,12 @@ FROM base AS stage-plugins
 ARG CUDA_ARCHS="75;80;86;89;90;120"
 
 # Fetch VapourSynth headers directly (independent of pip install)
+# Extract release version from meson.build (e.g. version: '74') for pkg-config;
+# some plugins (vs-noise) check version >= 55.
 RUN cd /tmp && git clone --depth 1 https://github.com/vapoursynth/vapoursynth.git vs-headers \
     && mkdir -p /usr/local/include/vapoursynth \
     && cp vs-headers/include/*.h /usr/local/include/vapoursynth/ \
+    && VS_RELEASE=$(grep -oP "version:\s*'\K\d+" vs-headers/meson.build || echo "74") \
     && rm -rf /tmp/vs-headers \
     && mkdir -p /usr/local/lib/pkgconfig \
     && cat > /usr/local/lib/pkgconfig/vapoursynth.pc <<PKGEOF
@@ -161,7 +164,7 @@ includedir=/usr/local/include/vapoursynth
 
 Name: VapourSynth
 Description: VapourSynth (headers only for plugin builds)
-Version: 4
+Version: ${VS_RELEASE}
 Cflags: -I\${includedir}
 PKGEOF
 
@@ -216,6 +219,13 @@ RUN cd /tmp && git clone --depth 1 https://github.com/AkarinVS/vapoursynth-plugi
     && LLVM_CONFIG=llvm-config-15 meson setup build --buildtype=release \
     && ninja -C build && ninja -C build install \
     && rm -rf /tmp/akarin
+
+# vs-noise (grain/noise generation — required by QTGMC Grainer.GAUSS for noise restore)
+RUN cd /tmp && git clone --depth 1 https://github.com/wwww-wwww/vs-noise \
+    && cd vs-noise \
+    && meson setup build --buildtype=release \
+    && ninja -C build && ninja -C build install \
+    && rm -rf /tmp/vs-noise
 
 # CAS (Contrast Adaptive Sharpening — AMD FidelityFX CAS for VapourSynth)
 RUN cd /tmp && git clone --depth 1 https://github.com/HomeOfVapourSynthEvolution/VapourSynth-CAS \
@@ -343,6 +353,7 @@ RUN echo "=== Verifying installation ===" \
     assert 'dfttest' in plugins, 'DFTTest native plugin not loaded!'; \
     assert 'resize2' in plugins, 'resize2 not loaded (required by vsjetpack)!'; \
     assert 'akarin' in plugins, 'akarin not loaded (required by vstools sc_detect)!'; \
+    assert 'noise' in plugins, 'noise not loaded (required by QTGMC Grainer)!'; \
     assert 'ffms2' in plugins or 'bs' in plugins, 'No source plugin (ffms2/bestsource) loaded!'; \
     has_nlm = 'nlm_cuda' in plugins or 'knlm' in plugins; \
     print(f'NLM denoiser: {\"nlm_cuda\" if \"nlm_cuda\" in plugins else \"knlm\" if \"knlm\" in plugins else \"NONE\"}'); \
