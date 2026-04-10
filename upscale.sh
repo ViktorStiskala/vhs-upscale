@@ -205,8 +205,9 @@ eval "$VSPIPE_CMD" | ffmpeg -y \
     -preset "$PRESET" \
     -crf "$CRF" \
     -pix_fmt yuv420p10le \
-    -x265-params "sao=1:bframes=8:ref=5:aq-mode=3:sar=16:15" \
+    -x265-params "sao=1:bframes=8:ref=5:aq-mode=3" \
     -aspect 4:3 \
+    -sar 16:15 \
     -c:a flac \
     "$OUTPUT_FILE"
 
